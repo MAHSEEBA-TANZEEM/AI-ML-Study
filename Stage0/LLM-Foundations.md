@@ -1,5 +1,5 @@
 LLM Fundamentals Crash Course — Notes
-This video is a beginner-oriented introduction to how large language models (LLMs) work and how to use them directly through APIs. It emphasizes learning the underlying concepts before relying on frameworks such as LangChain, LangGraph, or RAG systems.
+This introduction is to how large language models (LLMs) work and how to use them directly through APIs. It emphasizes learning the underlying concepts before relying on frameworks such as LangChain, LangGraph, or RAG systems.
 
 1. Course roadmap
 The video covers:
