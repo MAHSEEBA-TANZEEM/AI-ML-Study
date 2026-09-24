@@ -1,0 +1,807 @@
+These are comprehensive study notes “Deep Dive into LLMs like ChatGPT”. The video explains how an LLM is built—from internet text, to tokens, to neural-network training and post-training—and how to use these systems while accounting for their strengths and limitations.
+
+1. Core idea
+An LLM is a neural network trained to repeatedly answer one task:
+
+Given the tokens seen so far, what is the most likely next token?
+
+ChatGPT-like systems may appear to reason, remember facts, converse, code, or write creatively. But at the mechanical level, they generate one token at a time from a probability distribution conditioned on the preceding context.
+
+A useful high-level pipeline is:
+
+Internet text
+→
+cleaned dataset
+→
+tokens
+→
+pretrained base model
+→
+post-trained assistant
+→
+chat/inference
+Internet text→cleaned dataset→tokens→pretrained base model→post-trained assistant→chat/inference
+The major stages are:
+
+Pretraining data: collect and clean vast quantities of text.
+
+Tokenization: transform text into discrete IDs the model can process.
+
+Pretraining: train a Transformer to predict the next token.
+
+Post-training: make the base model helpful, safe, and conversational.
+
+Inference: generate an answer token by token at use time.
+
+2. Pretraining data
+What models learn from
+The initial training corpus is largely text gathered from publicly available internet sources, alongside selected high-quality sources such as books, reference material, code, and other datasets. The objective is not simply to collect the largest amount of text; the dataset must also be diverse and high quality.
+
+We use Hugging Face’s FineWeb as a representative public example. FineWeb is about 44 TB of processed text and approximately 15 trillion tokens. It illustrates that training data preparation is a substantial engineering and quality-control effort, not merely “download the internet.”
+
+Common Crawl
+A key raw source is Common Crawl, an organization that continually crawls and indexes web pages. Raw web data is noisy: it includes HTML markup, navigation bars, spam, duplicated pages, malware-related content, advertisements, boilerplate, and material of varying quality.
+
+Therefore, raw crawl data needs extensive processing before it becomes useful model-training material.
+
+Data-cleaning pipeline
+Typical data processing includes:
+
+Step	Purpose
+URL/domain filtering	Exclude known spam, malware, adult, low-quality, or otherwise undesirable sites
+Text extraction	Strip HTML, scripts, menus, repeated headers, sidebars, and formatting to retain useful document text
+Language filtering	Keep or prioritize languages according to the model’s intended capabilities
+Quality filtering	Remove low-information, automatically generated, repetitive, or poor-quality documents
+Deduplication	Avoid training repeatedly on identical or near-identical content
+Personally identifiable information filtering	Try to detect and remove sensitive personal information such as addresses or identification-like data
+Important implication: data shapes capability
+A model’s language skills, subject knowledge, biases, style, and blind spots are partly determined by what was retained in its training corpus.
+
+For example:
+
+A corpus heavily weighted toward English will tend to yield better English performance than performance in underrepresented languages.
+
+A corpus with large amounts of code will usually improve coding ability.
+
+Filtering decisions affect both quality and what kinds of knowledge the model has access to.
+
+A model cannot reliably know material absent from, weakly represented in, or added after its effective training cutoff.
+
+3. Tokenization
+Text is not fed in as words
+Neural networks need discrete symbols represented numerically. LLMs do not fundamentally read sentences as humans do, and they do not necessarily split text into whole words.
+
+Instead, text is transformed into tokens—small pieces of text, each assigned an integer ID.
+
+A token may represent:
+
+A whole common word, such as hello
+
+A word fragment, such as ing or tion
+
+A space-plus-word pattern, such as world
+
+Punctuation, a number, a newline, or a code fragment
+
+Occasionally a single character or an unusual byte sequence
+
+Why use tokens?
+At the lowest level, a computer can represent text as bytes, but byte-by-byte input creates very long sequences. LLMs therefore use a larger vocabulary of recurring text pieces, allowing them to process text in fewer steps.
+
+This creates a trade-off:
+
+Small vocabulary: fewer possible symbols but much longer sequences.
+
+Large vocabulary: more possible symbols but shorter sequences.
+
+Modern LLM tokenizers commonly have vocabularies on the order of tens of thousands to around 100,000 tokens. The GPT-4 tokenizer example discussed in the video has 100,277 tokens.
+
+Byte Pair Encoding
+A common tokenization method is Byte Pair Encoding (BPE).
+
+Simplified process:
+
+Begin from byte-level units.
+
+Identify adjacent token pairs that occur frequently.
+
+Merge a frequent pair into a new token.
+
+Repeat many times.
+
+Build a vocabulary containing commonly recurring text patterns.
+
+The result is a compression-like representation optimized for common text patterns.
+
+Why tokenization matters
+Tokenization affects:
+
+Cost, because many APIs bill by input and output tokens.
+
+Context-window usage.
+
+Performance across languages and writing systems.
+
+Performance on spelling, arithmetic formatting, rare names, and strange character sequences.
+
+The model’s tendency to struggle with some character-level tasks.
+
+A useful rule: the model sees token IDs, not letters or words in the way a person does.
+
+That is why an LLM may write eloquent essays but sometimes make unexpectedly basic mistakes when asked to reverse a word, count letters, or manipulate an unusual spelling.
+
+4. The pretrained model
+The next-token prediction objective
+After tokenization, training repeatedly presents the model with a sequence of tokens—the context—and asks it to predict which token comes next.
+
+Example:
+
+text
+Context: “The capital of France is”
+Target next token: “ Paris”
+The model outputs a probability for every possible vocabulary token:
+
+P
+(
+next token
+∣
+previous tokens
+)
+P(next token∣previous tokens)
+If the vocabulary has roughly 100,000 tokens, the model produces a distribution across approximately 100,000 next-token candidates.
+
+During training:
+
+The actual next token is known because it appears in the source text.
+
+The model is scored on how much probability it assigned to the true next token.
+
+Its parameters are adjusted to increase the probability of the actual continuation and decrease probability assigned to less appropriate alternatives.
+
+This happens across enormous numbers of examples.
+
+Parameters: the model’s learned settings
+A neural network contains parameters (often called weights). They begin as essentially random values.
+
+Training changes those parameters gradually so that the model’s predictions better match the statistical patterns in the training data.
+
+A helpful analogy is that parameters are enormous numbers of adjustable knobs. Training finds a configuration that captures regularities in language, code, facts, styles, reasoning patterns, dialogue, and many other structures present in the data.
+
+The knowledge is not typically stored as a neat database of sentences. Instead, it is distributed across the model’s learned numerical parameters.
+
+What “learning” means here
+The model is not explicitly given a universal rulebook for grammar, physics, programming, or history. It learns statistical structure from vast numbers of examples.
+
+This process can lead it to develop useful internal representations of:
+
+Grammar and syntax
+
+Facts frequently represented in training data
+
+Common reasoning patterns
+
+Programming languages and APIs
+
+Styles of writing
+
+Relationships among concepts
+
+Patterns in dialogue and instruction following
+
+But the same setup also explains why a model can produce convincing falsehoods: it is optimized to generate plausible next tokens, not inherently to verify every statement against external reality.
+
+5. Transformer architecture
+Most modern LLMs use the Transformer architecture.
+
+At a high level, the model takes token IDs, turns them into numerical vectors, processes them through many layers, and finally produces scores for all possible next tokens.
+
+Major components
+Component	Role
+Token embeddings	Convert token IDs into dense numeric vectors
+Positional information	Enables the model to account for token order
+Attention	Lets tokens selectively use information from other earlier tokens
+MLP/feed-forward layers	Transform and combine learned features
+Residual connections and normalization	Help information and gradients flow through deep networks
+Output layer + softmax	Converts final scores into next-token probabilities
+Attention
+Attention is central to why Transformers work well with language.
+
+When processing a token, attention lets the model assign varying importance to relevant earlier tokens. For example, when generating a pronoun, verb, variable name, or closing bracket, it can use earlier context that helps determine a suitable continuation.
+
+Attention does not make the model literally read, understand, or consciously focus in the human sense. It is a learned mathematical mechanism for combining information across positions in the sequence.
+
+Context window
+The context window is the maximum number of tokens the model can consider in one inference pass.
+
+This matters because the model has no unlimited memory of an ongoing conversation. It operates on the tokens currently included in its context.
+
+A longer context window can support:
+
+Longer documents
+
+More conversation history
+
+Larger codebases
+
+More examples and instructions
+
+Retrieval of details placed earlier in the prompt
+
+But context is still finite, can be expensive, and may be imperfectly used—especially when crucial information is buried in a very large prompt.
+
+6. Training vs. inference
+Training
+During training:
+
+The model is exposed to massive token sequences.
+
+Its parameters are updated repeatedly.
+
+This process requires substantial computing infrastructure and time.
+
+The aim is to encode useful predictive structure into the weights.
+
+Inference
+During inference—when you chat with a completed model:
+
+The weights are normally fixed.
+
+Your prompt becomes part of the context.
+
+The model predicts a distribution over possible next tokens.
+
+A token is selected.
+
+That new token is appended to the context.
+
+The process repeats until the response stops.
+
+So a chat response is an autoregressive generation loop:
+
+Prompt
+→
+next token
+→
+next token
+→
+⋯
+Prompt→next token→next token→⋯
+The model does not typically retrain itself from your individual message while responding.
+
+7. Sampling and generation
+The model does not always choose the single most probable token. Instead, a sampling method may choose among likely candidates.
+
+This is why identical prompts can produce different answers.
+
+Sampling trade-off
+Setting tendency	Typical effect
+More deterministic / lower randomness	More consistent, conservative, repetitive answers
+More random / higher randomness	More diverse, creative, surprising, but sometimes less reliable answers
+A deterministic mode can be useful for structured extraction, code transformation, and precise formatting. More variation may help brainstorming, creative writing, or generating several alternative approaches.
+
+The output is not usually a direct copy of one training document. Because choices are made token by token, generation is commonly a novel recombination of patterns learned during training.
+
+8. GPT-2 as a historical example
+Karpathy uses GPT-2 as an approachable example of a recognizably modern LLM stack.
+
+The key lesson is not its exact size, but the scaling trend:
+
+GPT-2 used a Transformer architecture.
+
+It had about 1.6 billion parameters in the example discussed.
+
+Its context length was 1,024 tokens.
+
+It was trained on roughly 100 billion tokens.
+
+Modern frontier systems generally use much larger datasets, substantially larger models, longer context windows, improved data curation, and more capable training and inference infrastructure.
+
+The broader point: many ideas behind today’s models existed in earlier systems, but capability improved as models, data, hardware, software, and post-training techniques scaled.
+
+9. Base models vs. assistants
+Base model
+A base model is primarily trained to continue text. Given a prompt, it continues in the style and patterns suggested by that prompt.
+
+It can be capable, but it may:
+
+Continue a document rather than answer a question.
+
+Imitate undesirable content.
+
+Follow patterns from the prompt in unexpected ways.
+
+Lack a stable assistant-like interaction style.
+
+Post-trained assistant
+A chat assistant is usually a base model that receives additional training intended to make it more useful in conversation.
+
+Post-training teaches behavior such as:
+
+Answer the user’s question directly.
+
+Follow instructions.
+
+Write clear explanations.
+
+Use a cooperative assistant tone.
+
+Decline certain unsafe requests.
+
+Use tools where applicable.
+
+Structure answers appropriately.
+
+This distinction is crucial: pretraining creates broad capability; post-training shapes behavior.
+
+10. Post-training data
+Post-training relies more on curated conversations and demonstrations than the massive raw internet corpus used for pretraining.
+
+Examples include:
+
+A user asks a question and an expert writes an ideal answer.
+
+A user requests code and a high-quality code response is supplied.
+
+A harmful or impossible request is paired with an appropriate refusal or safe alternative.
+
+Multiple possible answers are ranked by human evaluators.
+
+The model learns not only information patterns but also a desired interaction policy: what an assistant should say, how it should say it, and when it should ask for clarification, refuse, or use a tool.
+
+11. Supervised fine-tuning
+Supervised fine-tuning (SFT) trains the model on example prompt-response pairs.
+
+Example:
+
+text
+User: Explain photosynthesis to a 12-year-old.
+Assistant: Photosynthesis is the process plants use to turn sunlight,
+water, and carbon dioxide into food...
+The model learns to imitate high-quality answers.
+
+Strengths of SFT
+Gives the model an assistant-like format.
+
+Improves instruction following.
+
+Makes outputs more coherent and useful.
+
+Establishes baseline safety and communication behavior.
+
+Is relatively straightforward: train the model to reproduce desired responses.
+
+Limitation of SFT
+SFT alone can be limiting because it primarily teaches the model to imitate demonstrations. It does not necessarily optimize behavior across complex, multi-step goals or teach the model to explore better strategies beyond the examples provided.
+
+That motivates reinforcement-learning-based post-training.
+
+12. Hallucinations and reliability
+What is a hallucination?
+A hallucination is an output that sounds confident and plausible but is false, fabricated, unsupported, or incorrectly inferred.
+
+This is not merely an occasional interface bug. It follows from the core setup: the model is generating likely text based on patterns, rather than consulting a guaranteed truth database.
+
+Why hallucinations happen
+Common causes include:
+
+The model lacks the requested fact in its learned parameters.
+
+The answer requires current or private information unavailable in the prompt.
+
+The prompt is ambiguous or underspecified.
+
+The model is pressured to answer rather than permitted to say “I don’t know.”
+
+It combines familiar fragments into an incorrect but fluent statement.
+
+It makes an error in a long chain of reasoning.
+
+The desired output format encourages a fabricated citation, source, or detail.
+
+Practical response
+Treat LLM output as a capable draft or reasoning aid—not as automatic evidence.
+
+For high-stakes tasks, verify:
+
+Exact claims
+
+Statistics
+
+Legal, medical, financial, and safety guidance
+
+Code behavior and security
+
+Citations and quotations
+
+Current events and product details
+
+Names, dates, source links, and references
+
+13. Tools, knowledge, and memory
+A base LLM has knowledge distributed in its parameters, but it is not inherently connected to live external sources.
+
+Tools can extend it.
+
+Capability	What it provides
+Web search/browsing	Access to current public information and sources
+Retrieval over documents	Grounding in provided files, manuals, or organizational knowledge
+Code execution	Reliable calculations, data processing, testing, and structured analysis
+APIs	Access to databases, calendars, email, inventory, maps, or other systems
+Long-term memory systems	Storage and retrieval of selected user preferences or prior facts
+Key distinction: context vs. memory
+Context is the text currently supplied in the model’s input window.
+
+Working memory is effectively the information the model can use from that current context.
+
+Long-term memory requires an external system that stores and retrieves information across interactions.
+
+Parametric knowledge is the knowledge compressed into model weights during training.
+
+The model’s context is not equivalent to a human’s persistent memory. If information is omitted, truncated, buried, or unavailable, the model may fail to use it.
+
+14. Models need tokens to think
+A central point in the video is that models often need generated tokens to perform extended reasoning.
+
+A model that outputs an answer immediately may have little room for a multi-step calculation, proof, planning process, or search through alternative approaches. Allowing intermediate reasoning tokens can improve performance on harder tasks.
+
+Conceptually:
+
+More useful intermediate computation
+→
+more tokens/time
+→
+potentially stronger final answer
+More useful intermediate computation→more tokens/time→potentially stronger final answer
+This is why some models are designed or trained to spend more inference-time computation on difficult questions.
+
+However, longer reasoning is not automatically correct. It can still contain flawed assumptions, and users should evaluate the final result and verify important claims.
+
+15. Tokenization revisited: spelling limits
+LLMs can struggle with spelling and other character-level operations because they process tokens rather than individual letters.
+
+For a model, a familiar word might be represented as one token or a few chunks. That means the internal representation does not naturally correspond to a sequence of separate characters.
+
+This explains seemingly surprising failures such as:
+
+Counting a specific letter in a word.
+
+Reversing a string exactly.
+
+Manipulating rare names.
+
+Preserving complicated formatting.
+
+Handling arbitrary symbol sequences.
+
+Consistently following character-by-character constraints.
+
+Better prompting for exact text tasks
+When character-level accuracy matters:
+
+Ask the model to work one character at a time.
+
+Specify exact formatting constraints.
+
+Request a table or numbered intermediate steps.
+
+Use a code tool for counting, matching, parsing, validation, or transformation.
+
+Independently verify the final output.
+
+16. Jagged intelligence
+LLM intelligence is jagged, not uniformly human-like.
+
+A model can perform impressively on a difficult intellectual task and then fail on something a person would find trivial. Its performance is uneven across tasks, phrasing, languages, formats, and levels of novelty.
+
+Examples of this unevenness:
+
+It may draft sophisticated code but miss an obvious edge case.
+
+It may explain a scientific concept well but invent a specific citation.
+
+It may solve a complex-looking puzzle yet fail at exact letter counting.
+
+It may be excellent at a common language but weaker in a low-resource language.
+
+It may produce a compelling plan but overlook a practical constraint not included in the prompt.
+
+The right mindset is not “the system is smart” or “the system is dumb.” Instead:
+
+It is a powerful but uneven tool whose ability depends strongly on the task, data, context, prompting, tools, and verification method.
+
+17. Reinforcement learning
+Why reinforcement learning?
+In supervised learning, the model imitates example answers. In reinforcement learning (RL), the model is encouraged to generate responses that receive high reward under some evaluation system.
+
+The general loop is:
+
+The model generates an answer.
+
+A reward signal evaluates it.
+
+Training adjusts the model to favor better-performing behaviors.
+
+The process repeats across many examples.
+
+The reward may be generated by:
+
+Human judgments
+
+A learned reward model trained from human preferences
+
+Automated verifiers, such as a math checker, unit tests, a game score, or compiler feedback
+
+A combination of the above
+
+RL can help models learn behavior
+RL is useful where outcomes can be evaluated even if there is no single obvious “demonstration” to imitate.
+
+Examples:
+
+Improving helpfulness and instruction following.
+
+Choosing more preferred answers.
+
+Solving verifiable mathematics or programming tasks.
+
+Improving tool use.
+
+Learning to plan or reason over multiple steps.
+
+Playing games with clearly measurable success.
+
+18. DeepSeek-R1 and reasoning models
+Karpathy discusses DeepSeek-R1 as an illustration of a recent class of models that place greater emphasis on long-form reasoning behavior and reinforcement learning.
+
+The broader takeaway is that strong performance on difficult reasoning tasks may come not only from a larger pretrained model, but also from:
+
+Incentives to explore solutions.
+
+Rewards for verifiable correctness.
+
+Generating longer chains of intermediate reasoning.
+
+Using more inference-time computation for difficult tasks.
+
+Distillation or training approaches that transfer reasoning-like behavior into more efficient models.
+
+This changes the usual expectation of a chatbot: instead of always responding instantly, a system may benefit from allocating more time and tokens to harder questions.
+
+19. AlphaGo as an RL analogy
+AlphaGo provides a useful intuition for reinforcement learning.
+
+In a game such as Go, the system can play moves, receive a result, and use a clear success signal: winning or losing. It does not need a human to provide an ideal move for every position.
+
+The lesson for LLMs is that RL can be especially effective when there is a reliable way to check outcomes.
+
+For example:
+
+In code, tests may verify whether a solution works.
+
+In mathematics, an answer checker may confirm correctness.
+
+In games, the score or win/loss result is measurable.
+
+In tool-use tasks, success may be whether the correct external action was performed.
+
+The challenge is that many real-world language tasks do not have a clean, automatic correctness signal. Human preference data and learned reward models are then often used, but they can be imperfect.
+
+20. RLHF
+Reinforcement Learning from Human Feedback (RLHF) combines model generation, human preferences, and reinforcement learning.
+
+A simplified RLHF pipeline:
+
+Train a base model through next-token prediction.
+
+Supervised fine-tune it on high-quality demonstrations.
+
+Ask human evaluators to compare or rank candidate responses.
+
+Train a reward model to predict human preferences.
+
+Use RL to optimize the assistant toward high reward.
+
+What RLHF aims to improve
+Helpfulness
+
+Harmlessness
+
+Honesty or calibrated uncertainty
+
+Instruction following
+
+Tone and clarity
+
+Refusal behavior
+
+Reduced toxic, dangerous, or unwanted output
+
+RLHF limitations
+The reward system can be gamed. A model may learn to produce answers that look good to evaluators without actually being correct or deeply useful.
+
+Potential problems include:
+
+Sounding more confident than warranted.
+
+Being overly verbose, flattering, or cautious.
+
+Optimizing for apparent helpfulness rather than truth.
+
+Refusing too broadly or not broadly enough.
+
+Developing stylistic patterns favored by the reward process.
+
+Therefore, post-training is a balancing problem: the goal is to create an assistant that is useful, truthful, safe, and not excessively constrained.
+
+21. How to use LLMs well
+Give sufficient context
+The model can only reason from what it receives and what it learned previously. Include relevant background, constraints, examples, source material, audience, and desired output format.
+
+Weak prompt:
+
+text
+Write a report.
+Stronger prompt:
+
+text
+Write a 700-word report for a nontechnical manager explaining why
+customer churn increased in Q2. Use the attached metrics, distinguish
+facts from hypotheses, provide three possible causes, and end with
+five recommended actions.
+Define the task precisely
+State:
+
+Your desired outcome
+
+The intended audience
+
+Constraints and assumptions
+
+Required format
+
+Length
+
+Tone
+
+What the model should not do
+
+Whether it should ask questions when information is missing
+
+Use iteration
+Treat the first answer as a draft. Improve it by asking for:
+
+Corrections
+
+Alternate approaches
+
+Missing assumptions
+
+Counterarguments
+
+A concise version
+
+A more detailed version
+
+A table, checklist, or structured plan
+
+An explanation of uncertainty
+
+A critique against your requirements
+
+Request verification behavior
+For factual work, explicitly ask the model to:
+
+Separate known facts from inferences.
+
+Flag uncertainty.
+
+Identify assumptions.
+
+Cite or link sources when tools are available.
+
+Avoid fabricating details.
+
+Say what would need to be checked externally.
+
+Use tools for tool-shaped tasks
+Use external retrieval, calculators, code execution, databases, or documents when the task requires current, precise, or mechanically verifiable information.
+
+Good candidates for tools:
+
+Latest news or prices
+
+Exact calculations
+
+Spreadsheet analysis
+
+Long-document extraction
+
+Citation verification
+
+Data cleaning
+
+Code testing
+
+Searching private documents
+
+Comparing current product specifications
+
+22. Practical prompt template
+You can adapt this template:
+
+text
+Goal:
+[What you need produced or solved.]
+
+Context:
+[Relevant facts, source material, constraints, definitions.]
+
+Audience:
+[Who will read or use the result.]
+
+Requirements:
+- [Length]
+- [Format]
+- [Tone]
+- [Must include]
+- [Must avoid]
+
+Quality checks:
+- State important assumptions.
+- Distinguish facts from inferences.
+- Flag anything uncertain or needing external verification.
+- Ask a clarifying question if essential information is missing.
+23. Keeping track of LLMs
+The LLM ecosystem changes quickly. To evaluate a model, look beyond a single benchmark score.
+
+Consider:
+
+Dimension	Questions to ask
+Capability	Is it strong at the specific task you need?
+Reliability	Does it make unsupported claims or follow constraints well?
+Reasoning	Does it perform accurately on multi-step, verifiable tasks?
+Context	Can it handle the amount of text, code, or history you need?
+Tool use	Can it search, retrieve, calculate, browse, or execute code effectively?
+Speed	Is latency acceptable for your workflow?
+Cost	What is the token, subscription, compute, or operational cost?
+Privacy	Where does your data go, and how is it retained or used?
+Deployment	Do you need local use, API access, or a hosted chat interface?
+Safety	Does it behave appropriately in your intended environment?
+Public model-comparison tools such as LM Arena can be useful for observing preference-based comparisons, but practical testing on your own representative tasks remains essential.
+
+24. Where to access models
+LLMs can be accessed in several ways:
+
+Hosted chat applications: convenient interfaces for writing, learning, analysis, and everyday assistance.
+
+APIs: integrate models into applications, workflows, agents, products, and internal tools.
+
+Open-weight models: models that can be downloaded or run through supported platforms, often giving more control over deployment and privacy.
+
+Local runtimes: tools such as LM Studio can help users run compatible models locally, subject to their hardware constraints.
+
+The right choice depends on your needs for privacy, performance, cost, customization, and ease of use.
+
+25. Final summary
+The video’s central mental model is:
+
+An LLM is a large Transformer neural network trained on tokenized text to predict the next token, then post-trained to behave like a helpful assistant.
+
+The most important takeaways are:
+
+LLMs learn from large, filtered, tokenized datasets rather than from a hand-written knowledge base.
+
+They generate output one token at a time by predicting probable continuations.
+
+Their capabilities arise from learned patterns compressed into billions or more parameters.
+
+Pretraining creates general capability; post-training creates an assistant-like product.
+
+They can be highly useful but can also hallucinate, miss constraints, and display jagged performance.
+
+Tokens, context windows, sampling, and tool access strongly affect what they can do.
+
+Strong results come from good prompting, adequate context, iterative refinement, tool use, and verification.
+
+For important decisions, use LLMs as powerful collaborators—not unquestioned sources of truth.
+
